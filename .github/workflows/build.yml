@@ -1,206 +1,162 @@
 name: build
-
 on:
-  push:
-    branches:
-    tags:
-  pull_request:
-
+  push: null
 jobs:
   build:
     runs-on: ubuntu-latest
-    env: 
-      backrest_version: "2.55.1"
-      docker_backrest_version: "v0.33"
-      build_platforms: "linux/amd64,linux/arm64"
+    env:
+      backrest_version: 2.54.2
+      docker_backrest_version: v0.31
+      build_platforms: linux/amd64,linux/arm64
     steps:
-      - name: Set up go 1.23
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.23"
-        id: go
+    - name: Set up go 1.23
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
+      id: go
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Build and test
+      run: 'go test -v -timeout=100s -covermode=count -coverprofile=$GITHUB_WORKSPACE/coverage.out ./...
 
-      - name: Checkout
-        uses: actions/checkout@v4
+        '
+      env:
+        GOFLAGS: -mod=vendor
+        TZ: Etc/UTC
+    - name: Run linters
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: v1.62.2
+      env:
+        TZ: Etc/UTC
+    - name: Install goveralls
+      run: 'go install github.com/mattn/goveralls@latest
 
-      - name: Build and test
-        run: |
-          go test -v -timeout=100s -covermode=count -coverprofile=$GITHUB_WORKSPACE/coverage.out ./...
-        env:
-          GOFLAGS: "-mod=vendor"
-          TZ: "Etc/UTC"
+        '
+    - name: Submit coverage
+      run: $(go env GOPATH)/bin/goveralls -service="github" -coverprofile=$GITHUB_WORKSPACE/coverage.out
+      env:
+        COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+    - name: Set up Docker Buildx
+      id: buildx
+      uses: docker/setup-buildx-action@v3
+    - name: Available platforms
+      run: echo ${BUILDX_PLATFORMS}
+      env:
+        BUILDX_PLATFORMS: ${{ steps.buildx.outputs.platforms }}
+    - name: Run end-to-end tests
+      run: 'make test-e2e
 
-      - name: Run linters
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.62.2
-        env:
-          TZ: "Etc/UTC"
-
-      - name: Install goveralls
-        run: |
-          go install github.com/mattn/goveralls@latest
-
-      - name: Submit coverage
-        run: $(go env GOPATH)/bin/goveralls -service="github" -coverprofile=$GITHUB_WORKSPACE/coverage.out
-        env:
-          COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Available platforms
-        run: echo ${BUILDX_PLATFORMS}
-        env:
-          BUILDX_PLATFORMS: ${{ steps.buildx.outputs.platforms }}
-
-      - name: Run end-to-end tests
-        run: |
-          make test-e2e
-
-      - name: Build image and push master tag to ghcr.io and Docker Hub
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        env:
-          GITHUB_USER: ${{ github.actor }}
-          GITHUB_PKG: ${{ secrets.GUTHUB_CR_PAT }}
-          DOCKERHUB_USER: ${{ secrets.DOCKEHUB_USER }}
-          DOCKERHUB_PKG: ${{ secrets.DOCKEHUB_TOKEN }}
-          GITHUB_SHA: ${{ github.sha}}
-          GITHUB_REF: ${{ github.ref}}
-          BUILD_PLATFORMS: ${{ env.build_platforms }}
-          BACKREST_VERSION: ${{ env.backrest_version }}
-          DOCKER_BACKREST_VERSION: ${{ env.docker_backrest_version }}
-        run: |
-          ref="$(echo ${GITHUB_REF} | cut -d'/' -f3)"
-          sha="$(echo ${GITHUB_SHA} | cut -c1-7)"
-          echo REPO_BUILD_TAG: ${ref}-${sha}
-          echo ${GITHUB_PKG} | docker login ghcr.io -u ${GITHUB_USER} --password-stdin
-          echo ${DOCKERHUB_PKG} | docker login -u ${DOCKERHUB_USER} --password-stdin
-          docker buildx build --push \
-              --build-arg REPO_BUILD_TAG=${ref}-${sha} \
-              --build-arg BACKREST_VERSION=${BACKREST_VERSION} \
-              --build-arg DOCKER_BACKREST_VERSION=${DOCKER_BACKREST_VERSION} \
-              --platform ${BUILD_PLATFORMS} \
-              -t ghcr.io/${GITHUB_USER}/pgbackrest_exporter:${ref} \
-              -t ${DOCKERHUB_USER}/pgbackrest_exporter:${ref} .
-
-      - name: Build alpine image and push master tag to ghcr.io and Docker Hub
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        env:
-          GITHUB_USER: ${{ github.actor }}
-          GITHUB_PKG: ${{ secrets.GUTHUB_CR_PAT }}
-          DOCKERHUB_USER: ${{ secrets.DOCKEHUB_USER }}
-          DOCKERHUB_PKG: ${{ secrets.DOCKEHUB_TOKEN }}
-          GITHUB_SHA: ${{ github.sha}}
-          GITHUB_REF: ${{ github.ref}}
-          BUILD_PLATFORMS: ${{ env.build_platforms }}
-          BACKREST_VERSION: ${{ env.backrest_version }}
-          DOCKER_BACKREST_VERSION: ${{ env.docker_backrest_version }}
-        run: |
-          ref="$(echo ${GITHUB_REF} | cut -d'/' -f3)"
-          sha="$(echo ${GITHUB_SHA} | cut -c1-7)"
-          echo REPO_BUILD_TAG: ${ref}-${sha}
-          echo ${GITHUB_PKG} | docker login ghcr.io -u ${GITHUB_USER} --password-stdin
-          echo ${DOCKERHUB_PKG} | docker login -u ${DOCKERHUB_USER} --password-stdin
-          docker buildx build --push \
-              --build-arg REPO_BUILD_TAG=${ref}-${sha} \
-              --build-arg BACKREST_VERSION=${BACKREST_VERSION}-alpine \
-              --build-arg DOCKER_BACKREST_VERSION=${DOCKER_BACKREST_VERSION} \
-              --platform ${BUILD_PLATFORMS} \
-              -t ghcr.io/${GITHUB_USER}/pgbackrest_exporter:${ref}-alpine \
-              -t ${DOCKERHUB_USER}/pgbackrest_exporter:${ref}-alpine .
-
-      - name: Build image and push tag (latest) to ghcr.io and Docker Hub
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        env:
-          GITHUB_USER: ${{ github.actor }}
-          GITHUB_PKG: ${{ secrets.GUTHUB_CR_PAT }}
-          DOCKERHUB_USER: ${{ secrets.DOCKEHUB_USER }}
-          DOCKERHUB_PKG: ${{ secrets.DOCKEHUB_TOKEN }}
-          GITHUB_SHA: ${{ github.sha}}
-          GITHUB_REF: ${{ github.ref}}
-          BUILD_PLATFORMS: ${{ env.build_platforms }}
-          BACKREST_VERSION: ${{ env.backrest_version }}
-          DOCKER_BACKREST_VERSION: ${{ env.docker_backrest_version }}
-        run: |
-          ref="$(echo ${GITHUB_REF} | cut -d'/' -f3)"
-          build_ver="$(echo ${ref} | cut -c 2-)"
-          echo REPO_BUILD_TAG: ${build_ver}
-          echo ${GITHUB_PKG} | docker login ghcr.io -u ${GITHUB_USER} --password-stdin
-          echo ${DOCKERHUB_PKG} | docker login -u ${DOCKERHUB_USER} --password-stdin
-          docker buildx build --push \
-              --build-arg REPO_BUILD_TAG=${build_ver} \
-              --build-arg BACKREST_VERSION=${BACKREST_VERSION} \
-              --build-arg DOCKER_BACKREST_VERSION=${DOCKER_BACKREST_VERSION} \
-              --platform ${BUILD_PLATFORMS} \
-              -t ghcr.io/${GITHUB_USER}/pgbackrest_exporter:${ref} \
-              -t ghcr.io/${GITHUB_USER}/pgbackrest_exporter:latest \
-              -t ${DOCKERHUB_USER}/pgbackrest_exporter:${ref} \
-              -t ${DOCKERHUB_USER}/pgbackrest_exporter:latest .
-
-      - name: Build alpine image and push tag to ghcr.io and Docker Hub
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        env:
-          GITHUB_USER: ${{ github.actor }}
-          GITHUB_PKG: ${{ secrets.GUTHUB_CR_PAT }}
-          DOCKERHUB_USER: ${{ secrets.DOCKEHUB_USER }}
-          DOCKERHUB_PKG: ${{ secrets.DOCKEHUB_TOKEN }}
-          GITHUB_SHA: ${{ github.sha}}
-          GITHUB_REF: ${{ github.ref}}
-          BUILD_PLATFORMS: ${{ env.build_platforms }}
-          BACKREST_VERSION: ${{ env.backrest_version }}
-          DOCKER_BACKREST_VERSION: ${{ env.docker_backrest_version }}
-        run: |
-          ref="$(echo ${GITHUB_REF} | cut -d'/' -f3)"
-          build_ver="$(echo ${ref} | cut -c 2-)"
-          echo REPO_BUILD_TAG: ${build_ver}
-          echo ${GITHUB_PKG} | docker login ghcr.io -u ${GITHUB_USER} --password-stdin
-          echo ${DOCKERHUB_PKG} | docker login -u ${DOCKERHUB_USER} --password-stdin
-          docker buildx build --push \
-              --build-arg REPO_BUILD_TAG=${build_ver} \
-              --build-arg BACKREST_VERSION=${BACKREST_VERSION}-alpine \
-              --build-arg DOCKER_BACKREST_VERSION=${DOCKER_BACKREST_VERSION} \
-              --platform ${BUILD_PLATFORMS} \
-              -t ghcr.io/${GITHUB_USER}/pgbackrest_exporter:${ref}-alpine \
-              -t ${DOCKERHUB_USER}/pgbackrest_exporter:${ref}-alpine .
-
+        '
+    - name: Build image and push master tag to ghcr.io and Docker Hub
+      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      env:
+        GITHUB_USER: ${{ github.actor }}
+        GITHUB_PKG: ${{ secrets.GUTHUB_CR_PAT }}
+        DOCKERHUB_USER: ${{ secrets.DOCKEHUB_USER }}
+        DOCKERHUB_PKG: ${{ secrets.DOCKEHUB_TOKEN }}
+        GITHUB_SHA: ${{ github.sha}}
+        GITHUB_REF: ${{ github.ref}}
+        BUILD_PLATFORMS: ${{ env.build_platforms }}
+        BACKREST_VERSION: ${{ env.backrest_version }}
+        DOCKER_BACKREST_VERSION: ${{ env.docker_backrest_version }}
+      run: "ref=\"$(echo ${GITHUB_REF} | cut -d'/' -f3)\"\nsha=\"$(echo ${GITHUB_SHA} | cut -c1-7)\"\n\
+        echo REPO_BUILD_TAG: ${ref}-${sha}\necho ${GITHUB_PKG} | docker login ghcr.io -u ${GITHUB_USER}\
+        \ --password-stdin\necho ${DOCKERHUB_PKG} | docker login -u ${DOCKERHUB_USER} --password-stdin\n\
+        docker buildx build --push \\\n    --build-arg REPO_BUILD_TAG=${ref}-${sha} \\\n    --build-arg\
+        \ BACKREST_VERSION=${BACKREST_VERSION} \\\n    --build-arg DOCKER_BACKREST_VERSION=${DOCKER_BACKREST_VERSION}\
+        \ \\\n    --platform ${BUILD_PLATFORMS} \\\n    -t ghcr.io/${GITHUB_USER}/pgbackrest_exporter:${ref}\
+        \ \\\n    -t ${DOCKERHUB_USER}/pgbackrest_exporter:${ref} .\n"
+    - name: Build alpine image and push master tag to ghcr.io and Docker Hub
+      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      env:
+        GITHUB_USER: ${{ github.actor }}
+        GITHUB_PKG: ${{ secrets.GUTHUB_CR_PAT }}
+        DOCKERHUB_USER: ${{ secrets.DOCKEHUB_USER }}
+        DOCKERHUB_PKG: ${{ secrets.DOCKEHUB_TOKEN }}
+        GITHUB_SHA: ${{ github.sha}}
+        GITHUB_REF: ${{ github.ref}}
+        BUILD_PLATFORMS: ${{ env.build_platforms }}
+        BACKREST_VERSION: ${{ env.backrest_version }}
+        DOCKER_BACKREST_VERSION: ${{ env.docker_backrest_version }}
+      run: "ref=\"$(echo ${GITHUB_REF} | cut -d'/' -f3)\"\nsha=\"$(echo ${GITHUB_SHA} | cut -c1-7)\"\n\
+        echo REPO_BUILD_TAG: ${ref}-${sha}\necho ${GITHUB_PKG} | docker login ghcr.io -u ${GITHUB_USER}\
+        \ --password-stdin\necho ${DOCKERHUB_PKG} | docker login -u ${DOCKERHUB_USER} --password-stdin\n\
+        docker buildx build --push \\\n    --build-arg REPO_BUILD_TAG=${ref}-${sha} \\\n    --build-arg\
+        \ BACKREST_VERSION=${BACKREST_VERSION}-alpine \\\n    --build-arg DOCKER_BACKREST_VERSION=${DOCKER_BACKREST_VERSION}\
+        \ \\\n    --platform ${BUILD_PLATFORMS} \\\n    -t ghcr.io/${GITHUB_USER}/pgbackrest_exporter:${ref}-alpine\
+        \ \\\n    -t ${DOCKERHUB_USER}/pgbackrest_exporter:${ref}-alpine .\n"
+    - name: Build image and push tag (latest) to ghcr.io and Docker Hub
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      env:
+        GITHUB_USER: ${{ github.actor }}
+        GITHUB_PKG: ${{ secrets.GUTHUB_CR_PAT }}
+        DOCKERHUB_USER: ${{ secrets.DOCKEHUB_USER }}
+        DOCKERHUB_PKG: ${{ secrets.DOCKEHUB_TOKEN }}
+        GITHUB_SHA: ${{ github.sha}}
+        GITHUB_REF: ${{ github.ref}}
+        BUILD_PLATFORMS: ${{ env.build_platforms }}
+        BACKREST_VERSION: ${{ env.backrest_version }}
+        DOCKER_BACKREST_VERSION: ${{ env.docker_backrest_version }}
+      run: "ref=\"$(echo ${GITHUB_REF} | cut -d'/' -f3)\"\nbuild_ver=\"$(echo ${ref} | cut -c 2-)\"\n\
+        echo REPO_BUILD_TAG: ${build_ver}\necho ${GITHUB_PKG} | docker login ghcr.io -u ${GITHUB_USER}\
+        \ --password-stdin\necho ${DOCKERHUB_PKG} | docker login -u ${DOCKERHUB_USER} --password-stdin\n\
+        docker buildx build --push \\\n    --build-arg REPO_BUILD_TAG=${build_ver} \\\n    --build-arg\
+        \ BACKREST_VERSION=${BACKREST_VERSION} \\\n    --build-arg DOCKER_BACKREST_VERSION=${DOCKER_BACKREST_VERSION}\
+        \ \\\n    --platform ${BUILD_PLATFORMS} \\\n    -t ghcr.io/${GITHUB_USER}/pgbackrest_exporter:${ref}\
+        \ \\\n    -t ghcr.io/${GITHUB_USER}/pgbackrest_exporter:latest \\\n    -t ${DOCKERHUB_USER}/pgbackrest_exporter:${ref}\
+        \ \\\n    -t ${DOCKERHUB_USER}/pgbackrest_exporter:latest .\n"
+    - name: Build alpine image and push tag to ghcr.io and Docker Hub
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      env:
+        GITHUB_USER: ${{ github.actor }}
+        GITHUB_PKG: ${{ secrets.GUTHUB_CR_PAT }}
+        DOCKERHUB_USER: ${{ secrets.DOCKEHUB_USER }}
+        DOCKERHUB_PKG: ${{ secrets.DOCKEHUB_TOKEN }}
+        GITHUB_SHA: ${{ github.sha}}
+        GITHUB_REF: ${{ github.ref}}
+        BUILD_PLATFORMS: ${{ env.build_platforms }}
+        BACKREST_VERSION: ${{ env.backrest_version }}
+        DOCKER_BACKREST_VERSION: ${{ env.docker_backrest_version }}
+      run: "ref=\"$(echo ${GITHUB_REF} | cut -d'/' -f3)\"\nbuild_ver=\"$(echo ${ref} | cut -c 2-)\"\n\
+        echo REPO_BUILD_TAG: ${build_ver}\necho ${GITHUB_PKG} | docker login ghcr.io -u ${GITHUB_USER}\
+        \ --password-stdin\necho ${DOCKERHUB_PKG} | docker login -u ${DOCKERHUB_USER} --password-stdin\n\
+        docker buildx build --push \\\n    --build-arg REPO_BUILD_TAG=${build_ver} \\\n    --build-arg\
+        \ BACKREST_VERSION=${BACKREST_VERSION}-alpine \\\n    --build-arg DOCKER_BACKREST_VERSION=${DOCKER_BACKREST_VERSION}\
+        \ \\\n    --platform ${BUILD_PLATFORMS} \\\n    -t ghcr.io/${GITHUB_USER}/pgbackrest_exporter:${ref}-alpine\
+        \ \\\n    -t ${DOCKERHUB_USER}/pgbackrest_exporter:${ref}-alpine .\n"
   goreleaser:
     needs: build
     runs-on: ubuntu-latest
-    env: 
-      goreleaser_version: "v2.5.0"
+    env:
+      goreleaser_version: v2.5.0
     steps:
-      - name: Set up go 1.23
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.23"
-        id: go
+    - name: Set up go 1.23
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23'
+      id: go
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Get ref
+      id: vars
+      run: 'echo ::set-output name=ref::$(echo ${GITHUB_REF} | cut -d''/'' -f3)
 
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Get ref
-        id: vars
-        run: |
-          echo ::set-output name=ref::$(echo ${GITHUB_REF} | cut -d'/' -f3)
-
-      - name: Check GoReleaser config
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: ${{ env.goreleaser_version }}
-          args: check .goreleaser.yml
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        with:
-          distribution: goreleaser
-          version: ${{ env.goreleaser_version }}
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        '
+    - name: Check GoReleaser config
+      uses: goreleaser/goreleaser-action@v6
+      with:
+        distribution: goreleaser
+        version: ${{ env.goreleaser_version }}
+        args: check .goreleaser.yml
+    - name: Run GoReleaser
+      uses: goreleaser/goreleaser-action@v6
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      with:
+        distribution: goreleaser
+        version: ${{ env.goreleaser_version }}
+        args: release --clean
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
